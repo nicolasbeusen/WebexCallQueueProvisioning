@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Webex Calling – User Queue Assignment (Org-scoped)</title>
+  <title>Webex Calling – User Queue Assignment</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     pre.json { white-space: pre-wrap; word-break: break-word; }
@@ -29,12 +29,8 @@
       </div>
 
       <div class="bg-white rounded-2xl shadow p-4 space-y-2 lg:col-span-2">
-        <h2 class="text-lg font-semibold">2) Target (hardcoded)</h2>
+        <h2 class="text-lg font-semibold">2) Target user (hardcoded email)</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-          <div>
-            <div class="text-slate-500">Organization ID</div>
-            <code id="orgIdLabel" class="block mt-1 text-xs bg-slate-100 p-2 rounded">—</code>
-          </div>
           <div>
             <div class="text-slate-500">User Email</div>
             <code id="emailLabel" class="block mt-1 text-xs bg-slate-100 p-2 rounded">—</code>
@@ -52,7 +48,7 @@
             <code id="locationIdLabel" class="block mt-1 text-xs bg-slate-100 p-2 rounded">—</code>
           </div>
         </div>
-        <p class="text-xs text-slate-500 mt-2">Org & email are hardcoded in the script; location/org are derived from the user details.</p>
+        <p class="text-xs text-slate-500 mt-2">Email is hardcoded in the script; location is derived from the user details.</p>
       </div>
     </section>
 
@@ -77,21 +73,20 @@
     <footer class="mt-8 text-xs text-slate-500">
       <p>Flow:</p>
       <ol class="list-decimal ml-6">
-        <li>Resolve <code>personId</code> via <code>/v1/people?email</code> (org-scoped)</li>
+        <li>Resolve <code>personId</code> via <code>/v1/people?email</code></li>
         <li>Get user calling details via <code>/v1/people/{personId}?callingData=true</code> → derive <code>locationId</code></li>
         <li>List queues in that location via <code>/v1/telephony/config/queues?locationId</code></li>
         <li>Read queue-agent assignments via <code>/v1/telephony/config/queues/agents?locationId</code>, filter by <code>personId</code> → derive <code>agentId</code> & selected queues</li>
         <li>On save: add/remove using <code>POST</code>/<code>DELETE</code> to <code>/v1/telephony/config/queues/agents</code></li>
       </ol>
-      <p class="mt-2">Note: Some admin endpoints may be subject to CORS from the browser; if so, proxy these requests server-side. Token must include <code>spark-admin:telephony_config_read</code> and <code>spark-admin:telephony_config_write</code> for the target org.</p>
+      <p class="mt-2">Some admin endpoints may be subject to CORS from the browser; if so, proxy these requests server-side. Token must include <code>spark-admin:telephony_config_read</code> and <code>spark-admin:telephony_config_write</code>.</p>
     </footer>
   </div>
 
   <script>
-    // ======== HARD-CODED TARGETS ========
-    // TODO: set these two constants to your target org and user now; later make them dynamic.
-    const ORG_ID = "Y2lzY29zcGFyazovL3VzL09SR0FOSVpBVElPTi81ZWQxOTAwMS04N2E4LTQ1OWMtODEyYS1iZmE0Y2FmYjRiNmI";              // e.g., Y2lzY29zcGFyazovL3VzL09SR0FOSVpBVElPTi8...
-    const USER_EMAIL = "nicolas.beusen@cxc.proximus.com";         // the end user's email whose queues you want to manage
+    // ======== HARD-CODED TARGET ========
+    // TODO: set this constant to your target user now; later make it dynamic.
+    const USER_EMAIL = "nicolas.beusen@cxc.proximus.com"; // the end user's email whose queues you want to manage
 
     // ======== API Helpers ========
     const API_BASE = 'https://webexapis.com/v1';
@@ -105,15 +100,14 @@
       return { 'Authorization': `Bearer ${token}` };
     }
 
-    function withOrg(url) {
-      const u = new URL(url, API_BASE);
-      if (ORG_ID) u.searchParams.set('orgId', ORG_ID);
+    function urlFor(path, params = {}) {
+      const u = new URL(API_BASE + path);
+      Object.entries(params).forEach(([k,v]) => (v ?? '') !== '' && u.searchParams.append(k, v));
       return u;
     }
 
     async function apiGet(path, params = {}) {
-      const u = withOrg(path);
-      Object.entries(params).forEach(([k,v]) => (v ?? '') !== '' && u.searchParams.append(k, v));
+      const u = urlFor(path, params);
       setLastReq('GET ' + u.pathname + u.search);
       const res = await fetch(u, { headers: { ...authHeaders() } });
       if (!res.ok) throw new Error(`GET ${u.pathname + u.search} → ${res.status} ${res.statusText}`);
@@ -121,7 +115,7 @@
     }
 
     async function apiWrite(path, method = 'POST', body = null) {
-      const u = withOrg(path);
+      const u = urlFor(path);
       setLastReq(method + ' ' + u.pathname + u.search);
       const res = await fetch(u, {
         method,
@@ -130,8 +124,7 @@
       });
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`${method} ${u.pathname + u.search} → ${res.status} ${res.statusText}
-${text}`);
+        throw new Error(`${method} ${u.pathname + u.search} → ${res.status} ${res.statusText}\n${text}`);
       }
       return res.json().catch(() => ({}));
     }
@@ -140,7 +133,6 @@ ${text}`);
     const state = {
       person: null,
       personId: null,
-      derivedOrgId: null,
       locationId: null,
       agentId: null,
       queues: [],           // [{id, name, ...}]
@@ -153,7 +145,6 @@ ${text}`);
     }
 
     function renderContext() {
-      $('orgIdLabel').textContent = ORG_ID || '—';
       $('emailLabel').textContent = USER_EMAIL || '—';
       $('personIdLabel').textContent = state.personId || '—';
       $('agentIdLabel').textContent = state.agentId || '—';
@@ -168,10 +159,10 @@ ${text}`);
         const li = document.createElement('label');
         li.className = 'flex items-center gap-3 p-2 rounded-lg border hover:bg-slate-50';
         li.innerHTML = `
-          <input type="checkbox" class="queueBox h-4 w-4" data-queueid="${q.id}" id="${id}" ${state.assignedQueueIds.has(q.id) ? 'checked' : ''} />
+          <input type=\"checkbox\" class=\"queueBox h-4 w-4\" data-queueid=\"${q.id}\" id=\"${id}\" ${state.assignedQueueIds.has(q.id) ? 'checked' : ''} />
           <div>
-            <div class="font-medium">${q.name || q.displayName || q.id}</div>
-            <div class="text-xs text-slate-500">${q.id}</div>
+            <div class=\"font-medium\">${q.name || q.displayName || q.id}</div>
+            <div class=\"text-xs text-slate-500\">${q.id}</div>
           </div>`;
         wrap.appendChild(li);
       });
@@ -189,17 +180,15 @@ ${text}`);
         const me = await apiGet('/people/me');
         $('meInfo').textContent = `Authed as ${me.displayName || me.emails?.[0] || me.id}`;
 
-        // 1) resolve person by hardcoded email (org-scoped)
+        // 1) resolve person by hardcoded email
         const ppl = await apiGet('/people', { email: USER_EMAIL, max: 1 });
         const person = (ppl.items || [])[0];
-        if (!person) throw new Error('No user found for USER_EMAIL in this org');
+        if (!person) throw new Error('No user found for USER_EMAIL');
         state.person = person;
         state.personId = person.id;
-        state.derivedOrgId = person.orgId || person.organizationId || null;
 
         // 2) get person calling details to derive locationId
         const full = await apiGet(`/people/${encodeURIComponent(state.personId)}`, { callingData: true });
-        // Try multiple fields where location might live
         const cd = full.callingData || full; // sometimes nested
         const locId = cd.locationId || cd.primaryLocationId || cd.siteId || full.locationId || null;
         if (!locId) throw new Error('Could not derive locationId from person callingData');
@@ -231,7 +220,6 @@ ${text}`);
     async function saveChanges() {
       try {
         enableActions(false);
-        // Gather desired set from checkboxes
         const boxes = Array.from(document.querySelectorAll('.queueBox'));
         const desired = new Set(boxes.filter(b => b.checked).map(b => b.dataset.queueid));
         const current = new Set(Array.from(state.assignedQueueIds));
@@ -240,7 +228,6 @@ ${text}`);
         const toRemove = Array.from(current).filter(id => !desired.has(id));
 
         const ops = [];
-        // Prefer personId in body; include agentId if we have it.
         for (const queueId of toAdd) {
           const body = { queueId, personId: state.personId };
           if (state.agentId) body.agentId = state.agentId;
@@ -279,7 +266,7 @@ ${text}`);
     $('btnReload').addEventListener('click', initFlow);
     $('btnSave').addEventListener('click', saveChanges);
 
-    // Set visible constants
+    // Set labels
     renderContext();
   </script>
 </body>
