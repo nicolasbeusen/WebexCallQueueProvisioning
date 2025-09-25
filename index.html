@@ -172,7 +172,7 @@
       renderUser();
 
       // 3) /telephony/config/queues/locationId={locationId} → queues of the location (authoritative list)
-      const qRes = await apiGet(`/telephony/config/queues/locationId=${encodeURIComponent(state.locationId)}`, token);
+      const qRes = await apiGet(`/telephony/config/queues?locationId=${encodeURIComponent(state.locationId)}`, token);
       const list = qRes.queues || qRes.items || qRes.data || [];
       state.queues = list.map(q=>({ id:q.id, name:q.name, phoneNumber:q.phoneNumber, locationId:q.locationId }));
 
