@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Webex Queue Manager — v2.0 (me → location → queues)</title>
+  <title>Webex Queue Manager — v2.4 (me → location → queues)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <meta name="color-scheme" content="light dark">
   <style>
@@ -14,7 +14,7 @@
 <body class="bg-slate-50 text-slate-900 selection:bg-indigo-200/60">
   <header class="px-4 py-4 md:px-8 sticky top-0 bg-white/80 backdrop-blur border-b border-slate-200 z-10">
     <div class="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center gap-3">
-      <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager <span class="text-xs font-normal text-slate-500 align-middle">v2.3</span></h1>
+      <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager <span class="text-xs font-normal text-slate-500 align-middle">v2.4</span></h1>
       <p class="text-sm text-slate-600">1) <code>/people/me</code> → 2) <code>/people/{id}?callingData=true</code> → 3) <code>/telephony/config/queues/locationId={locationId}</code> → 4) <code>/telephony/config/queues/agents/{personId}?offset&amp;limit</code>.</p>
     </div>
   </header>
@@ -172,7 +172,7 @@
       renderUser();
 
       // 3) /telephony/config/queues/locationId={locationId} → queues of the location (authoritative list)
-      const qRes = await apiGet(`/telephony/config/queues?locationId=${encodeURIComponent(state.locationId)}`, token);
+      const qRes = await apiGet(`/telephony/config/queues/locationId=${encodeURIComponent(state.locationId)}`, token);
       const list = qRes.queues || qRes.items || qRes.data || [];
       state.queues = list.map(q=>({ id:q.id, name:q.name, phoneNumber:q.phoneNumber, locationId:q.locationId }));
 
@@ -186,16 +186,75 @@
     finally{ setLoading(dom.loadBtn,false); }
   }
 
-  // ---------- Save (diff) → PUT /queues/agents/{personId}/settings ----------
+  // ---------- Save (diff) → GET & PUT /telephony/config/locations/{locationId}/queues/{queueId} ----------
   async function saveChanges(){
     const token = dom.token.value.trim(); if (!token) return;
-    const checked = getCheckedMap(); const before = new Map([...state.assigned.entries()].map(([id,v])=>[id, !!v.joinEnabled])); const payload = [];
-    for (const q of state.queues){ const now = !!checked.get(q.id); const was = !!before.get(q.id); if (now !== was) payload.push({ queueId:q.id, joinEnabled: now }); }
-    if (payload.length === 0){ toast('No changes to save'); return; }
+
+    // Compute diff between current checkboxes and known assignments
+    const checked = getCheckedMap();
+    const before = new Map([...state.assigned.entries()].map(([id,v])=>[id, !!v.joinEnabled]));
+
+    const toAdd = [];
+    const toRemove = [];
+    for (const q of state.queues){
+      const now = !!checked.get(q.id);
+      const was = !!before.get(q.id);
+      if (now && !was) toAdd.push(q.id);
+      if (!now && was) toRemove.push(q.id);
+    }
+
+    if (toAdd.length === 0 && toRemove.length === 0){ toast('No changes to save'); return; }
+
     setDirty(true); setLoading(dom.saveBtn,true);
+
+    // Helper: fetch queue details, mutate agents membership, then PUT back
+    const changeOne = async (queueId, shouldJoin) => {
+      const path = `/telephony/config/locations/${encodeURIComponent(state.locationId)}/queues/${encodeURIComponent(queueId)}`;
+
+      // 1) GET current queue details to obtain existing members/agents
+      const details = await apiGet(path, token);
+      // Normalize possible shapes of the agents list in the response
+      let agents = details.agents || details.queueAgents || details.members || [];
+      agents = agents.map(a => ({ ...a }));
+
+      // 2) Find current user in the agents list by personId (fallbacks for id/agentId variants)
+      const idx = agents.findIndex(m => (
+        m.personId === state.personId ||
+        m.person?.id === state.personId ||
+        m.agentId === state.personId ||
+        m.id === state.personId
+      ));
+
+      // 3) Apply desired change
+      if (shouldJoin){
+        if (idx === -1){
+          agents.push({ personId: state.personId, joinEnabled: true });
+        } else {
+          agents[idx].joinEnabled = true;
+        }
+      } else {
+        if (idx !== -1){ agents.splice(idx, 1); }
+      }
+
+      // 4) PUT the updated agents list back to the same queue endpoint
+      await apiPut(path, token, { agents });
+
+      // 5) Update local mirror
+      state.assigned.set(queueId, { joinEnabled: shouldJoin });
+    };
+
     try{
-      await apiPut(`/telephony/config/queues/agents/${encodeURIComponent(state.personId)}/settings`, token, { settings: payload });
-      payload.forEach(({queueId,joinEnabled})=> state.assigned.set(queueId,{joinEnabled}));
+      const tasks = [
+        ...toAdd.map(id => ({ id, join: true })),
+        ...toRemove.map(id => ({ id, join: false })),
+      ];
+
+      // Limit concurrency to avoid rate limits
+      let i = 0; const limit = 3;
+      const worker = async () => { while (i < tasks.length){ const t = tasks[i++]; await changeOne(t.id, t.join); } };
+      const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
+      await Promise.all(workers);
+
       renderQueues(); setDirty(false); toast('Assignments updated','success');
     } catch(err){ console.error(err); showAlert(err.message||String(err),'error'); }
     finally{ setLoading(dom.saveBtn,false); }
