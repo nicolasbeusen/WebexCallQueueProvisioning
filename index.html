@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Webex Queue Manager (me → personId → location → queues)</title>
+  <title>Webex Queue Manager — v2.0 (me → location → queues)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <meta name="color-scheme" content="light dark">
   <style>
@@ -14,8 +14,8 @@
 <body class="bg-slate-50 text-slate-900 selection:bg-indigo-200/60">
   <header class="px-4 py-4 md:px-8 sticky top-0 bg-white/80 backdrop-blur border-b border-slate-200 z-10">
     <div class="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center gap-3">
-      <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager</h1>
-      <p class="text-sm text-slate-600">Uses <code>/v1/people/me</code> → <code>personId</code> → <code>locationId</code> → location queues.</p>
+      <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager <span class="text-xs font-normal text-slate-500 align-middle">v2.0</span></h1>
+      <p class="text-sm text-slate-600">1) <code>/people/me</code> → 2) <code>/people/{id}?callingData=true</code> → 3) <code>/telephony/config/queues/{locationId}</code> → 4) <code>/telephony/config/queues/agents/{personId}?offset&amp;limit</code>.</p>
     </div>
   </header>
 
@@ -28,6 +28,15 @@
           <input id="token" type="password" class="mt-1 w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="Paste a Webex PAT with admin telephony scopes" autocomplete="off" />
           <small class="text-slate-500">Scopes: <code>spark:people_read</code>, <code>spark-admin:telephony_config_read</code>, <code>spark-admin:telephony_config_write</code> (for saving).</small>
         </label>
+        <div class="block text-sm text-slate-600">
+          <div class="font-medium">How it works</div>
+          <ol class="list-decimal ml-5">
+            <li>Resolve <code>personId</code> using <code>/v1/people/me</code></li>
+            <li>Get <code>locationId</code> using <code>/v1/people/{personId}?callingData=true</code></li>
+            <li>List queues via <code>/v1/telephony/config/queues/{locationId}</code></li>
+            <li>Fetch assignments via <code>/v1/telephony/config/queues/agents/{personId}?offset&amp;limit</code></li>
+          </ol>
+        </div>
       </div>
       <div class="mt-4 flex flex-wrap gap-3">
         <button id="loadBtn" class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 text-white px-4 py-2 font-medium shadow hover:bg-indigo-500 active:scale-[.99]">
@@ -110,52 +119,29 @@
     dirty: false,
   };
 
+  // ---------- UI helpers ----------
   function showAlert(msg, type='info'){
     const color = type === 'error' ? 'bg-rose-50 text-rose-800 border-rose-200' : type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-indigo-50 text-indigo-800 border-indigo-200';
-    const el = document.createElement('div');
-    el.className = `border ${color} rounded-xl px-4 py-3 text-sm`;
-    el.innerHTML = msg;
-    dom.alerts.prepend(el);
-    setTimeout(()=>el.remove(), 8000);
+    const el = document.createElement('div'); el.className = `border ${color} rounded-xl px-4 py-3 text-sm`; el.innerHTML = msg; dom.alerts.prepend(el); setTimeout(()=>el.remove(), 8000);
   }
-  function toast(msg, type='info'){
-    const color = type === 'error' ? 'bg-rose-600' : type === 'success' ? 'bg-emerald-600' : 'bg-slate-900';
-    const el = document.createElement('div');
-    el.className = `${color} text-white shadow rounded-xl px-4 py-2 mb-2`;
-    el.textContent = msg;
-    dom.toast.appendChild(el);
-    setTimeout(()=>el.remove(), 3000);
-  }
-  function setLoading(button, loading){
-    button.disabled = loading;
-    const icon = button.querySelector('svg');
-    if (icon){ icon.classList.toggle('spin', loading); icon.style.opacity = loading? '0.7':'1'; }
-  }
-  function encodeQuery(p){
-    const usp = new URLSearchParams();
-    Object.entries(p||{}).forEach(([k,v])=>{ if(v!==undefined && v!==null && v!=='') usp.set(k,v); });
-    return usp.toString();
-  }
-  async function apiGet(path, token, params){
-    const url = new URL(apiBase + path);
-    if (params) url.search = encodeQuery(params);
-    const res = await fetch(url.toString(), { method:'GET', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/json' } });
-    if (!res.ok){ const text = await res.text().catch(()=> ''); throw new Error(`GET ${path} → ${res.status} ${res.statusText} ${text}`); }
-    return res.json();
-  }
-  async function apiPut(path, token, body, params){
-    const url = new URL(apiBase + path);
-    if (params) url.search = encodeQuery(params);
-    const res = await fetch(url.toString(), { method:'PUT', headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json', 'Accept':'application/json' }, body: JSON.stringify(body||{}) });
-    if (!res.ok && res.status !== 204){ const text = await res.text().catch(()=> ''); throw new Error(`PUT ${path} → ${res.status} ${res.statusText} ${text}`); }
-    return res.status === 204 ? null : res.json();
-  }
-  // Pagination helper for /v1/telephony/config/queues/agents/{personId}
-  // Uses offset & limit and fetches all pages.
-  async function getAllAgentQueues(personId, token, limit = 100) {
+  function toast(msg, type='info'){ const color = type === 'error' ? 'bg-rose-600' : type === 'success' ? 'bg-emerald-600' : 'bg-slate-900'; const el = document.createElement('div'); el.className = `${color} text-white shadow rounded-xl px-4 py-2 mb-2`; el.textContent = msg; dom.toast.appendChild(el); setTimeout(()=>el.remove(), 3000); }
+  function setLoading(button, loading){ button.disabled = loading; const icon = button.querySelector('svg'); if (icon){ icon.classList.toggle('spin', loading); icon.style.opacity = loading? '0.7':'1'; } }
+  function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+  function setDirty(d=true){ state.dirty = d; dom.saveBtn.classList.toggle('ring-2', d); dom.saveBtn.classList.toggle('ring-emerald-300', d); }
+  function getCheckedMap(){ const m=new Map(); dom.queuesList.querySelectorAll('input[type="checkbox"][data-queue-id]').forEach(chk=>m.set(chk.dataset.queueId, !!chk.checked)); return m; }
+
+  // ---------- HTTP helpers ----------
+  function encodeQuery(p){ const usp = new URLSearchParams(); Object.entries(p||{}).forEach(([k,v])=>{ if(v!==undefined && v!==null && v!=='') usp.set(k,v); }); return usp.toString(); }
+  async function apiGet(path, token, params){ const url = new URL(apiBase + path); if (params) url.search = encodeQuery(params); const res = await fetch(url.toString(), { method:'GET', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/json' } }); if (!res.ok){ const text = await res.text().catch(()=> ''); throw new Error(`GET ${path} → ${res.status} ${res.statusText} ${text}`); } return res.json(); }
+  async function apiGetMaybe404(path, token, params){ const url = new URL(apiBase + path); if (params) url.search = encodeQuery(params); const res = await fetch(url.toString(), { method:'GET', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/json' } }); if (res.status === 404) return { __notFound: true }; if (!res.ok){ const text = await res.text().catch(()=> ''); throw new Error(`GET ${path} → ${res.status} ${res.statusText} ${text}`); } return res.json(); }
+  async function apiPut(path, token, body, params){ const url = new URL(apiBase + path); if (params) url.search = encodeQuery(params); const res = await fetch(url.toString(), { method:'PUT', headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json', 'Accept':'application/json' }, body: JSON.stringify(body||{}) }); if (!res.ok && res.status !== 204){ const text = await res.text().catch(()=> ''); throw new Error(`PUT ${path} → ${res.status} ${res.statusText} ${text}`); } return res.status === 204 ? null : res.json(); }
+
+  // ---------- API pagination for agent queues (offset/limit) ----------
+  async function getAllAgentQueues(personId, token, limit = 100){
     let offset = 0; const all = [];
-    for (let guard = 0; guard < 1000; guard++) { // hard stop to avoid accidental infinite loops
-      const page = await apiGet(`/telephony/config/queues/agents/${encodeURIComponent(personId)}`, token, { offset, limit });
+    for (let guard = 0; guard < 1000; guard++){
+      const page = await apiGetMaybe404(`/telephony/config/queues/agents/${encodeURIComponent(personId)}`, token, { offset, limit });
+      if (page.__notFound) return []; // user not found → no queues associated
       const qs = page.queues || page.items || [];
       all.push(...qs);
       if (qs.length < limit) break; // last page
@@ -164,61 +150,33 @@
     return all;
   }
 
-  function renderUser(){
-    dom.uName.textContent = state.person?.displayName || `${state.person?.firstName||''} ${state.person?.lastName||''}`.trim();
-    dom.uEmail.textContent = state.person?.emails?.[0] || '';
-    dom.uId.textContent = state.personId || '';
-    dom.uLoc.textContent = state.locationName ? `${state.locationName} (${state.locationId})` : (state.locationId || '—');
-    dom.uExt.textContent = state.extension || '—';
-    dom.userCard.classList.remove('hidden');
-  }
-  function renderQueues(){
-    const filter = (dom.search.value||'').toLowerCase();
-    const assignedOnly = dom.toggleAssignedOnly.checked;
-    dom.queuesList.innerHTML = '';
-    const assignedIds = new Set([...state.assigned.entries()].filter(([_,v])=>v?.joinEnabled).map(([k])=>k));
-    const items = state.queues.filter(q => !filter || (q.name?.toLowerCase().includes(filter) || q.phoneNumber?.toLowerCase().includes(filter))).filter(q => !assignedOnly || assignedIds.has(q.id));
-    if (items.length === 0){ dom.queuesList.innerHTML = '<div class="py-8 text-center text-slate-500">No queues to display.</div>'; return; }
-    for (const q of items){
-      const row = document.createElement('label');
-      const checked = assignedIds.has(q.id);
-      row.className = 'flex items-center gap-3 py-3';
-      row.innerHTML = `<input type="checkbox" class="rounded size-4 shrink-0" data-queue-id="${q.id}" ${checked?'checked':''}>
-        <div class="flex-1 min-w-0">
-          <div class="font-medium truncate">${escapeHtml(q.name||'(unnamed queue)')}</div>
-          <div class="text-xs text-slate-500">${escapeHtml(q.phoneNumber||'')} <span class="text-slate-300">•</span> <span class="font-mono">${q.id}</span></div>
-        </div>`;
-      dom.queuesList.appendChild(row);
-    }
-    dom.queuesCard.classList.remove('hidden');
-    dom.saveBtn.disabled = false; dom.resetBtn.disabled = false;
-  }
-  function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
-  function setDirty(d=true){ state.dirty = d; dom.saveBtn.classList.toggle('ring-2', d); dom.saveBtn.classList.toggle('ring-emerald-300', d); }
-  function getCheckedMap(){ const m=new Map(); dom.queuesList.querySelectorAll('input[type="checkbox"][data-queue-id]').forEach(chk=>m.set(chk.dataset.queueId, !!chk.checked)); return m; }
+  // ---------- Rendering ----------
+  function renderUser(){ dom.uName.textContent = state.person?.displayName || `${state.person?.firstName||''} ${state.person?.lastName||''}`.trim(); dom.uEmail.textContent = state.person?.emails?.[0] || ''; dom.uId.textContent = state.personId || ''; dom.uLoc.textContent = state.locationName ? `${state.locationName} (${state.locationId})` : (state.locationId || '—'); dom.uExt.textContent = state.extension || '—'; dom.userCard.classList.remove('hidden'); }
+  function renderQueues(){ const filter = (dom.search.value||'').toLowerCase(); const assignedOnly = dom.toggleAssignedOnly.checked; dom.queuesList.innerHTML = ''; const assignedIds = new Set([...state.assigned.entries()].filter(([_,v])=>v?.joinEnabled).map(([k])=>k)); const items = state.queues.filter(q => !filter || (q.name?.toLowerCase().includes(filter) || q.phoneNumber?.toLowerCase().includes(filter))).filter(q => !assignedOnly || assignedIds.has(q.id)); if (items.length === 0){ dom.queuesList.innerHTML = '<div class="py-8 text-center text-slate-500">No queues to display.</div>'; return; } for (const q of items){ const row = document.createElement('label'); const checked = assignedIds.has(q.id); row.className = 'flex items-center gap-3 py-3'; row.innerHTML = `<input type="checkbox" class="rounded size-4 shrink-0" data-queue-id="${q.id}" ${checked?'checked':''}><div class="flex-1 min-w-0"><div class="font-medium truncate">${escapeHtml(q.name||'(unnamed queue)')}</div><div class="text-xs text-slate-500">${escapeHtml(q.phoneNumber||'')} <span class="text-slate-300">•</span> <span class="font-mono">${q.id}</span></div></div>`; dom.queuesList.appendChild(row); } dom.queuesCard.classList.remove('hidden'); dom.saveBtn.disabled = false; dom.resetBtn.disabled = false; }
 
-  // ---- Load flow (uses /people/me)
+  // ---------- Load flow (v2.0) ----------
   async function loadAll(){
     const token = dom.token.value.trim(); if (!token){ showAlert('Please paste a token.', 'error'); return; }
     setLoading(dom.loadBtn,true); dom.alerts.innerHTML=''; dom.queuesList.innerHTML='';
     try{
-      // (1) Resolve current user via /people/me
+      // 1) /people/me → personId
       const me = await apiGet('/people/me', token);
       state.person = me; state.personId = me.id;
 
-      // (2) Derive calling location via /people/{personId}?callingData=true
+      // 2) /people/{personId}?callingData=true → locationId (and extras)
       const detail = await apiGet(`/people/${encodeURIComponent(state.personId)}`, token, { callingData:true });
-      state.locationId = detail.locationId || me.locationId || detail.callingData?.locationId || null;
+      state.locationId = detail.locationId || detail.callingData?.locationId || me.locationId || null;
       state.locationName = detail.addresses?.[0]?.locality || null;
       state.extension = detail.extension || null;
       if (!state.locationId){ showAlert('Your user does not have a Calling locationId. Queues cannot be loaded.', 'error'); renderUser(); return; }
       renderUser();
 
-      // (3) Queues for location
-      const qRes = await apiGet('/telephony/config/queues', token, { locationId: state.locationId });
-      state.queues = (qRes.queues || qRes.items || qRes.data || []).map(q=>({ id:q.id, name:q.name, phoneNumber:q.phoneNumber, locationId:q.locationId }));
+      // 3) /telephony/config/queues/{locationId} → queues of the location (authoritative list)
+      const qRes = await apiGet(`/telephony/config/queues/${encodeURIComponent(state.locationId)}`, token);
+      const list = qRes.queues || qRes.items || qRes.data || [];
+      state.queues = list.map(q=>({ id:q.id, name:q.name, phoneNumber:q.phoneNumber, locationId:q.locationId }));
 
-      // (4) Current memberships for this agent (personId)
+      // 4) /telephony/config/queues/agents/{personId}?offset&limit → agent's associated queues (or 404 → none)
       const agentQueues = await getAllAgentQueues(state.personId, token, 100);
       state.assigned = new Map();
       agentQueues.forEach(q => state.assigned.set(q.id, { joinEnabled: !!q.joinEnabled }));
@@ -228,18 +186,13 @@
     finally{ setLoading(dom.loadBtn,false); }
   }
 
-  // ---- Save (diff) → PUT /queues/agents/{personId}/settings
+  // ---------- Save (diff) → PUT /queues/agents/{personId}/settings ----------
   async function saveChanges(){
     const token = dom.token.value.trim(); if (!token) return;
-    const checked = getCheckedMap();
-    const before = new Map([...state.assigned.entries()].map(([id,v])=>[id, !!v.joinEnabled]));
-    const payload = [];
-    for (const q of state.queues){
-      const now = !!checked.get(q.id); const was = !!before.get(q.id);
-      if (now !== was) payload.push({ queueId:q.id, joinEnabled: now });
-    }
+    const checked = getCheckedMap(); const before = new Map([...state.assigned.entries()].map(([id,v])=>[id, !!v.joinEnabled])); const payload = [];
+    for (const q of state.queues){ const now = !!checked.get(q.id); const was = !!before.get(q.id); if (now !== was) payload.push({ queueId:q.id, joinEnabled: now }); }
     if (payload.length === 0){ toast('No changes to save'); return; }
-    setLoading(dom.saveBtn,true);
+    setDirty(true); setLoading(dom.saveBtn,true);
     try{
       await apiPut(`/telephony/config/queues/agents/${encodeURIComponent(state.personId)}/settings`, token, { settings: payload });
       payload.forEach(({queueId,joinEnabled})=> state.assigned.set(queueId,{joinEnabled}));
