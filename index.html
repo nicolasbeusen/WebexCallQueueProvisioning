@@ -86,7 +86,7 @@
   <script>
     // ======== HARD-CODED TARGET ========
     // TODO: set this constant to your target user now; later make it dynamic.
-    const USER_EMAIL = "nicolas.beusen@cxc.proximus.com"; // the end user's email whose queues you want to manage
+    const USER_EMAIL = "agent@example.com"; // the end user's email whose queues you want to manage
 
     // ======== API Helpers ========
     const API_BASE = 'https://webexapis.com/v1';
@@ -124,7 +124,8 @@
       });
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`${method} ${u.pathname + u.search} → ${res.status} ${res.statusText}\n${text}`);
+        throw new Error(`${method} ${u.pathname + u.search} → ${res.status} ${res.statusText}
+${text}`);
       }
       return res.json().catch(() => ({}));
     }
@@ -194,22 +195,45 @@
         if (!locId) throw new Error('Could not derive locationId from person callingData');
         state.locationId = locId;
 
-        // 3) list queues for that location
+        // 3) list queues for that location (authoritative list of queues)
         const qres = await apiGet('/telephony/config/queues', { locationId: state.locationId, max: 2000 });
         state.queues = qres.items || qres.data || [];
 
-        // 4) list queue-agent assignments in that location and filter for this person
+        // 4) obtain the AGENT ID for this user (filter by personId). This call is NOT used to derive queue list.
         const ares = await apiGet('/telephony/config/queues/agents', { locationId: state.locationId, max: 2000 });
         const agents = ares.items || ares.data || [];
         const mine = agents.filter(a => a.personId === state.personId || a.person?.id === state.personId);
-        state.assignedQueueIds = new Set(mine.map(a => a.queueId || a.queue?.id).filter(Boolean));
-        // obtain an agentId if present
-        const found = mine[0];
-        state.agentId = found?.agentId || found?.id || null;
+        state.agentId = mine[0]?.agentId || mine[0]?.id || null;
+
+        // 5) determine which of the location's queues the user is currently assigned to
+        // by checking each queue's details endpoint for membership
+        state.assignedQueueIds = new Set();
+
+        async function mapLimit(items, limit, fn) {
+          let i = 0;
+          const results = new Array(items.length);
+          const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+            while (i < items.length) {
+              const idx = i++;
+              results[idx] = await fn(items[idx], idx);
+            }
+          });
+          await Promise.all(workers);
+          return results;
+        }
+
+        await mapLimit(state.queues, 5, async (q) => {
+          const path = `/telephony/config/locations/${encodeURIComponent(state.locationId)}/queues/${encodeURIComponent(q.id)}`;
+          const details = await apiGet(path);
+          const members = details.agents || details.queueAgents || details.members || [];
+          const isMember = members.some(m => (state.agentId && (m.agentId === state.agentId || m.id === state.agentId)) || (m.personId === state.personId) || (m.person?.id === state.personId));
+          if (isMember) state.assignedQueueIds.add(q.id);
+          return null;
+        });
 
         renderContext();
         renderQueues();
-        show({ me, person, calling: full, queues: state.queues, myAssignments: mine });
+        show({ me, person, calling: full, queues: state.queues, agentRecord: mine[0] || null, assignedQueueIds: Array.from(state.assignedQueueIds) });
       } catch (e) {
         renderContext();
         show(e.message || String(e));
