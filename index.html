@@ -3,43 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Webex Queue Manager (per-user, per-location)</title>
+  <title>Webex Queue Manager (me → personId → location → queues)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <meta name="color-scheme" content="light dark">
   <style>
-    .spin { animation: spin 1s linear infinite; }
-    @keyframes spin { from { transform: rotate(0deg)} to { transform: rotate(360deg)} }
+    .spin { animation: spin 1s linear infinite }
+    @keyframes spin { from {transform:rotate(0)} to {transform:rotate(360deg)} }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900 selection:bg-indigo-200/60">
-  <!-- Header -->
   <header class="px-4 py-4 md:px-8 sticky top-0 bg-white/80 backdrop-blur border-b border-slate-200 z-10">
     <div class="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center gap-3">
       <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager</h1>
-      <p class="text-sm text-slate-600">Assign/unassign a user's Call Queue memberships for their location.</p>
+      <p class="text-sm text-slate-600">Uses <code>/v1/people/me</code> → <code>personId</code> → <code>locationId</code> → location queues.</p>
     </div>
   </header>
 
   <main class="max-w-5xl mx-auto px-4 md:px-8 py-6">
-
-    <!-- Auth & Target User -->
+    <!-- Auth -->
     <section class="bg-white rounded-2xl shadow p-5 border border-slate-200">
       <div class="grid md:grid-cols-2 gap-4">
         <label class="block">
           <span class="block text-sm font-medium text-slate-700">Personal Access Token (Bearer)</span>
-          <input id="token" type="password" class="mt-1 w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="Paste a Webex PAT with admin scopes" autocomplete="off" />
-          <small class="text-slate-500">Scopes needed: <code>spark:people_read</code>, <code>spark-admin:telephony_config_read</code>, and <code>spark-admin:telephony_config_write</code> (for saving).</small>
-        </label>
-        <label class="block">
-          <span class="block text-sm font-medium text-slate-700">Target user's email</span>
-          <input id="email" type="email" class="mt-1 w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="jane.doe@company.com" />
-          <small class="text-slate-500">We resolve <code>personId</code> via <code>/v1/people?email</code>.</small>
+          <input id="token" type="password" class="mt-1 w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="Paste a Webex PAT with admin telephony scopes" autocomplete="off" />
+          <small class="text-slate-500">Scopes: <code>spark:people_read</code>, <code>spark-admin:telephony_config_read</code>, <code>spark-admin:telephony_config_write</code> (for saving).</small>
         </label>
       </div>
       <div class="mt-4 flex flex-wrap gap-3">
         <button id="loadBtn" class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 text-white px-4 py-2 font-medium shadow hover:bg-indigo-500 active:scale-[.99]">
           <svg class="size-4" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a8 8 0 1 0 8 8h-2a6 6 0 1 1-1.757-4.243l-1.414 1.415H18V2.828l-1.586 1.586A7.963 7.963 0 0 0 10 2Z"/></svg>
-          Load user & queues
+          Load my queues
         </button>
         <button id="saveBtn" disabled class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 text-white px-4 py-2 font-medium shadow disabled:opacity-40 hover:enabled:bg-emerald-500">
           <svg class="size-4" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm3.707-9.707-4 4-2-2L6.293 11.707 9 14.414l4.707-4.707-1.414-1.414Z"/></svg>
@@ -49,10 +42,10 @@
       </div>
     </section>
 
-    <!-- Status / Alerts -->
+    <!-- Alerts -->
     <div id="alerts" class="mt-4 space-y-3"></div>
 
-    <!-- User Summary -->
+    <!-- User card -->
     <section id="userCard" class="mt-6 hidden bg-white rounded-2xl shadow p-5 border border-slate-200">
       <h2 class="text-lg font-semibold">User</h2>
       <div class="mt-3 grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
@@ -67,7 +60,7 @@
     <!-- Queues -->
     <section id="queuesCard" class="mt-6 hidden bg-white rounded-2xl shadow p-5 border border-slate-200">
       <div class="flex items-center justify-between flex-wrap gap-3">
-        <h2 class="text-lg font-semibold">Queues in user's location</h2>
+        <h2 class="text-lg font-semibold">Queues in my location</h2>
         <div class="flex items-center gap-2 text-sm">
           <label class="flex items-center gap-2 cursor-pointer select-none"><input id="toggleAssignedOnly" type="checkbox" class="rounded"/> Show only assigned</label>
           <div class="h-5 w-px bg-slate-300"></div>
@@ -75,23 +68,18 @@
           <button id="clearAllBtn" class="text-indigo-600 hover:underline">Clear all</button>
         </div>
       </div>
-      <div class="mt-3">
-        <input id="search" type="search" placeholder="Filter queues…" class="w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" />
-      </div>
+      <div class="mt-3"><input id="search" type="search" placeholder="Filter queues…" class="w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" /></div>
       <div id="queuesList" class="mt-4 divide-y divide-slate-200"></div>
     </section>
-
   </main>
 
-  <!-- Toast container -->
   <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[90vw] md:max-w-xl"></div>
 
 <script>
-(function() {
+(function(){
   const apiBase = 'https://webexapis.com/v1';
   const dom = {
     token: document.getElementById('token'),
-    email: document.getElementById('email'),
     loadBtn: document.getElementById('loadBtn'),
     saveBtn: document.getElementById('saveBtn'),
     resetBtn: document.getElementById('resetBtn'),
@@ -111,290 +99,151 @@
     toast: document.getElementById('toast'),
   };
 
-  // App state
   const state = {
-    person: null,          // person object from /people
-    personId: null,        // string
-    locationId: null,      // string
-    locationName: null,    // optional
+    person: null,
+    personId: null,
+    locationId: null,
+    locationName: null,
     extension: null,
-    queues: [],            // array of {id, name, phoneNumber, locationId}
-    assigned: new Map(),   // queueId -> {joinEnabled: boolean}
+    queues: [],
+    assigned: new Map(), // queueId -> { joinEnabled }
     dirty: false,
   };
 
-  // --- Helpers ---
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-  function showAlert(msg, type = 'info') {
+  function showAlert(msg, type='info'){
     const color = type === 'error' ? 'bg-rose-50 text-rose-800 border-rose-200' : type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-indigo-50 text-indigo-800 border-indigo-200';
     const el = document.createElement('div');
     el.className = `border ${color} rounded-xl px-4 py-3 text-sm`;
     el.innerHTML = msg;
     dom.alerts.prepend(el);
-    setTimeout(() => el.remove(), 8000);
+    setTimeout(()=>el.remove(), 8000);
   }
-
-  function toast(msg, type = 'info') {
+  function toast(msg, type='info'){
     const color = type === 'error' ? 'bg-rose-600' : type === 'success' ? 'bg-emerald-600' : 'bg-slate-900';
     const el = document.createElement('div');
-    el.className = `${color} text-white shadow rounded-xl px-4 py-2 mb-2 animate-in slide-in-from-bottom-2`;
+    el.className = `${color} text-white shadow rounded-xl px-4 py-2 mb-2`;
     el.textContent = msg;
     dom.toast.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+    setTimeout(()=>el.remove(), 3000);
   }
-
-  function setLoading(button, loading) {
+  function setLoading(button, loading){
     button.disabled = loading;
-    const spinner = button.querySelector('svg');
-    if (!spinner) return;
-    spinner.style.opacity = loading ? '0.7' : '1';
-    spinner.classList.toggle('spin', loading);
+    const icon = button.querySelector('svg');
+    if (icon){ icon.classList.toggle('spin', loading); icon.style.opacity = loading? '0.7':'1'; }
   }
-
-  function encodeQuery(params) {
+  function encodeQuery(p){
     const usp = new URLSearchParams();
-    Object.entries(params || {}).forEach(([k, v]) => {
-      if (v === undefined || v === null || v === '') return;
-      usp.set(k, v);
-    });
+    Object.entries(p||{}).forEach(([k,v])=>{ if(v!==undefined && v!==null && v!=='') usp.set(k,v); });
     return usp.toString();
   }
-
-  async function apiGet(path, token, params) {
+  async function apiGet(path, token, params){
     const url = new URL(apiBase + path);
     if (params) url.search = encodeQuery(params);
-    const res = await fetch(url.toString(), {
-      method: 'GET',
-      // IMPORTANT: Do NOT set Content-Type on GET (stricter header validation 2025-09) 
-      // https://developer.webex.com/messaging/docs/api/changelog/webex-messaging
-      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-    });
-    if (res.status === 429) {
-      const ra = res.headers.get('Retry-After');
-      showAlert(`Rate limited (429). Retry after ${ra || 'a moment'}.`, 'error');
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`GET ${path} failed: ${res.status} ${res.statusText} ${text}`);
-    }
+    const res = await fetch(url.toString(), { method:'GET', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/json' } });
+    if (!res.ok){ const text = await res.text().catch(()=> ''); throw new Error(`GET ${path} → ${res.status} ${res.statusText} ${text}`); }
     return res.json();
   }
-
-  async function apiPut(path, token, body, params) {
+  async function apiPut(path, token, body, params){
     const url = new URL(apiBase + path);
     if (params) url.search = encodeQuery(params);
-    const res = await fetch(url.toString(), {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(body || {})
-    });
-    if (!res.ok && res.status !== 204) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`PUT ${path} failed: ${res.status} ${res.statusText} ${text}`);
-    }
+    const res = await fetch(url.toString(), { method:'PUT', headers:{ 'Authorization':`Bearer ${token}`, 'Content-Type':'application/json', 'Accept':'application/json' }, body: JSON.stringify(body||{}) });
+    if (!res.ok && res.status !== 204){ const text = await res.text().catch(()=> ''); throw new Error(`PUT ${path} → ${res.status} ${res.statusText} ${text}`); }
     return res.status === 204 ? null : res.json();
   }
 
-  function renderUser() {
-    dom.uName.textContent = state.person?.displayName || `${state.person?.firstName || ''} ${state.person?.lastName || ''}`.trim();
+  function renderUser(){
+    dom.uName.textContent = state.person?.displayName || `${state.person?.firstName||''} ${state.person?.lastName||''}`.trim();
     dom.uEmail.textContent = state.person?.emails?.[0] || '';
     dom.uId.textContent = state.personId || '';
     dom.uLoc.textContent = state.locationName ? `${state.locationName} (${state.locationId})` : (state.locationId || '—');
     dom.uExt.textContent = state.extension || '—';
     dom.userCard.classList.remove('hidden');
   }
-
-  function renderQueues() {
-    const filter = (dom.search.value || '').toLowerCase();
+  function renderQueues(){
+    const filter = (dom.search.value||'').toLowerCase();
     const assignedOnly = dom.toggleAssignedOnly.checked;
-
     dom.queuesList.innerHTML = '';
-
-    const assignedIds = new Set([...state.assigned.entries()].filter(([_, v]) => v?.joinEnabled).map(([k]) => k));
-
-    let items = state.queues
-      .filter(q => !filter || (q.name?.toLowerCase()?.includes(filter) || q.phoneNumber?.toLowerCase()?.includes(filter)))
-      .filter(q => !assignedOnly || assignedIds.has(q.id));
-
-    if (items.length === 0) {
-      dom.queuesList.innerHTML = `<div class="py-8 text-center text-slate-500">No queues to display.</div>`;
-      return;
-    }
-
-    for (const q of items) {
-      const checked = assignedIds.has(q.id);
+    const assignedIds = new Set([...state.assigned.entries()].filter(([_,v])=>v?.joinEnabled).map(([k])=>k));
+    const items = state.queues.filter(q => !filter || (q.name?.toLowerCase().includes(filter) || q.phoneNumber?.toLowerCase().includes(filter))).filter(q => !assignedOnly || assignedIds.has(q.id));
+    if (items.length === 0){ dom.queuesList.innerHTML = '<div class="py-8 text-center text-slate-500">No queues to display.</div>'; return; }
+    for (const q of items){
       const row = document.createElement('label');
+      const checked = assignedIds.has(q.id);
       row.className = 'flex items-center gap-3 py-3';
-      row.innerHTML = `
-        <input type="checkbox" class="rounded size-4 shrink-0" data-queue-id="${q.id}" ${checked ? 'checked' : ''}>
+      row.innerHTML = `<input type="checkbox" class="rounded size-4 shrink-0" data-queue-id="${q.id}" ${checked?'checked':''}>
         <div class="flex-1 min-w-0">
-          <div class="font-medium truncate">${escapeHtml(q.name || '(unnamed queue)')}</div>
-          <div class="text-xs text-slate-500">${escapeHtml(q.phoneNumber || '')} <span class="text-slate-300">•</span> <span class="font-mono">${q.id}</span></div>
-        </div>
-      `;
+          <div class="font-medium truncate">${escapeHtml(q.name||'(unnamed queue)')}</div>
+          <div class="text-xs text-slate-500">${escapeHtml(q.phoneNumber||'')} <span class="text-slate-300">•</span> <span class="font-mono">${q.id}</span></div>
+        </div>`;
       dom.queuesList.appendChild(row);
     }
-
     dom.queuesCard.classList.remove('hidden');
-    dom.saveBtn.disabled = false;
-    dom.resetBtn.disabled = false;
+    dom.saveBtn.disabled = false; dom.resetBtn.disabled = false;
   }
+  function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+  function setDirty(d=true){ state.dirty = d; dom.saveBtn.classList.toggle('ring-2', d); dom.saveBtn.classList.toggle('ring-emerald-300', d); }
+  function getCheckedMap(){ const m=new Map(); dom.queuesList.querySelectorAll('input[type="checkbox"][data-queue-id]').forEach(chk=>m.set(chk.dataset.queueId, !!chk.checked)); return m; }
 
-  function escapeHtml(str) {
-    return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-  }
+  // ---- Load flow (uses /people/me)
+  async function loadAll(){
+    const token = dom.token.value.trim(); if (!token){ showAlert('Please paste a token.', 'error'); return; }
+    setLoading(dom.loadBtn,true); dom.alerts.innerHTML=''; dom.queuesList.innerHTML='';
+    try{
+      // (1) Resolve current user via /people/me
+      const me = await apiGet('/people/me', token);
+      state.person = me; state.personId = me.id;
 
-  function setDirty(d = true) {
-    state.dirty = d;
-    dom.saveBtn.classList.toggle('ring-2', d);
-    dom.saveBtn.classList.toggle('ring-emerald-300', d);
-  }
-
-  function getCheckedMap() {
-    const inputs = dom.queuesList.querySelectorAll('input[type="checkbox"][data-queue-id]');
-    const map = new Map();
-    inputs.forEach(chk => map.set(chk.dataset.queueId, !!chk.checked));
-    return map;
-  }
-
-  async function loadAll() {
-    const token = dom.token.value.trim();
-    const email = dom.email.value.trim();
-    if (!token || !email) {
-      showAlert('Please provide both a token and the target user\'s email.', 'error');
-      return;
-    }
-
-    setLoading(dom.loadBtn, true);
-    dom.alerts.innerHTML = '';
-    dom.queuesList.innerHTML = '';
-
-    try {
-      // 1) Resolve person by email
-      const people = await apiGet('/people', token, { email }); // returns { items: [...] }
-      const person = (people.items || []).find(p => (p.emails || []).includes(email)) || (people.items || [])[0];
-      if (!person) throw new Error('No person found for that email.');
-      state.person = person;
-      state.personId = person.id;
-
-      // 2) Get user calling details to derive locationId (and extension)
-      const personDetail = await apiGet(`/people/${encodeURIComponent(state.personId)}`, token, { callingData: true });
-      state.locationId = personDetail.locationId || person.locationId || null;
-      state.locationName = (personDetail.addresses && personDetail.addresses[0]?.locality) || null; // may not be set
-      state.extension = personDetail.extension || person.extension || null;
-      if (!state.locationId) {
-        showAlert('This user has no Webex Calling locationId (no license or not provisioned). Queues cannot be loaded.', 'error');
-        renderUser();
-        return;
-      }
-
+      // (2) Derive calling location via /people/{personId}?callingData=true
+      const detail = await apiGet(`/people/${encodeURIComponent(state.personId)}`, token, { callingData:true });
+      state.locationId = detail.locationId || me.locationId || detail.callingData?.locationId || null;
+      state.locationName = detail.addresses?.[0]?.locality || null;
+      state.extension = detail.extension || null;
+      if (!state.locationId){ showAlert('Your user does not have a Calling locationId. Queues cannot be loaded.', 'error'); renderUser(); return; }
       renderUser();
 
-      // 3) Get queue list for location
+      // (3) Queues for location
       const qRes = await apiGet('/telephony/config/queues', token, { locationId: state.locationId });
-      state.queues = (qRes.queues || qRes.items || qRes.data || []).map(q => ({
-        id: q.id,
-        name: q.name,
-        phoneNumber: q.phoneNumber,
-        locationId: q.locationId
-      }));
+      state.queues = (qRes.queues || qRes.items || qRes.data || []).map(q=>({ id:q.id, name:q.name, phoneNumber:q.phoneNumber, locationId:q.locationId }));
 
-      // 4) Get the queues already associated to this agent (by personId)
-      // NOTE: The agent id for PEOPLE corresponds to their personId
-      const agentDetail = await apiGet(`/telephony/config/queues/agents/${encodeURIComponent(state.personId)}`, token);
-      const current = new Map();
-      (agentDetail.queues || []).forEach(q => current.set(q.id, { joinEnabled: !!q.joinEnabled }));
-      state.assigned = current;
+      // (4) Current memberships for this agent (personId)
+      const agent = await apiGet(`/telephony/config/queues/agents/${encodeURIComponent(state.personId)}`, token);
+      state.assigned = new Map();
+      (agent.queues || []).forEach(q => state.assigned.set(q.id, { joinEnabled: !!q.joinEnabled }));
 
-      renderQueues();
-      toast('Loaded user, queues & current assignments', 'success');
-      setDirty(false);
-
-    } catch (err) {
-      console.error(err);
-      showAlert(err.message || String(err), 'error');
-    } finally {
-      setLoading(dom.loadBtn, false);
-    }
+      renderQueues(); toast('Loaded profile, location queues & assignments', 'success'); setDirty(false);
+    } catch(err){ console.error(err); showAlert(err.message||String(err),'error'); }
+    finally{ setLoading(dom.loadBtn,false); }
   }
 
-  async function saveChanges() {
-    const token = dom.token.value.trim();
-    if (!token) return;
-
-    const checked = getCheckedMap(); // queueId -> boolean
-
-    // Build minimal diff payload to avoid unintended changes
-    // If a queue is checked and wasn\'t joined -> set joinEnabled true
-    // If a queue is unchecked and was joined -> set joinEnabled false
+  // ---- Save (diff) → PUT /queues/agents/{personId}/settings
+  async function saveChanges(){
+    const token = dom.token.value.trim(); if (!token) return;
+    const checked = getCheckedMap();
+    const before = new Map([...state.assigned.entries()].map(([id,v])=>[id, !!v.joinEnabled]));
     const payload = [];
-
-    const wasJoined = new Map([...state.assigned.entries()].map(([id, v]) => [id, !!v.joinEnabled]));
-
-    // For all queues displayed, compute diff
-    for (const q of state.queues) {
-      const now = !!checked.get(q.id);
-      const before = !!wasJoined.get(q.id);
-      if (now !== before) {
-        payload.push({ queueId: q.id, joinEnabled: now });
-      }
+    for (const q of state.queues){
+      const now = !!checked.get(q.id); const was = !!before.get(q.id);
+      if (now !== was) payload.push({ queueId:q.id, joinEnabled: now });
     }
-
-    if (payload.length === 0) {
-      toast('No changes to save');
-      return;
-    }
-
-    setLoading(dom.saveBtn, true);
-    try {
+    if (payload.length === 0){ toast('No changes to save'); return; }
+    setLoading(dom.saveBtn,true);
+    try{
       await apiPut(`/telephony/config/queues/agents/${encodeURIComponent(state.personId)}/settings`, token, { settings: payload });
-
-      // Update local state
-      payload.forEach(({ queueId, joinEnabled }) => state.assigned.set(queueId, { joinEnabled }));
-      setDirty(false);
-      renderQueues();
-      toast('Assignments updated', 'success');
-
-    } catch (err) {
-      console.error(err);
-      showAlert(err.message || String(err), 'error');
-    } finally {
-      setLoading(dom.saveBtn, false);
-    }
+      payload.forEach(({queueId,joinEnabled})=> state.assigned.set(queueId,{joinEnabled}));
+      renderQueues(); setDirty(false); toast('Assignments updated','success');
+    } catch(err){ console.error(err); showAlert(err.message||String(err),'error'); }
+    finally{ setLoading(dom.saveBtn,false); }
   }
 
-  // --- Event wiring ---
+  // Events
   dom.loadBtn.addEventListener('click', loadAll);
   dom.saveBtn.addEventListener('click', saveChanges);
-  dom.resetBtn.addEventListener('click', () => {
-    // re-render from state
-    renderQueues();
-    setDirty(false);
-  });
-
+  dom.resetBtn.addEventListener('click', ()=>{ renderQueues(); setDirty(false); });
   dom.search.addEventListener('input', renderQueues);
   dom.toggleAssignedOnly.addEventListener('change', renderQueues);
-  dom.selectAllBtn.addEventListener('click', () => {
-    dom.queuesList.querySelectorAll('input[type="checkbox"]').forEach(chk => chk.checked = true);
-    setDirty(true);
-  });
-  dom.clearAllBtn.addEventListener('click', () => {
-    dom.queuesList.querySelectorAll('input[type="checkbox"]').forEach(chk => chk.checked = false);
-    setDirty(true);
-  });
-
-  dom.queuesList.addEventListener('change', (e) => {
-    if (e.target && e.target.matches('input[type="checkbox"][data-queue-id]')) setDirty(true);
-  });
-
-  // UX niceties
-  dom.token.addEventListener('change', () => toast('Token set'));
-  dom.email.addEventListener('keydown', (e) => { if (e.key === 'Enter') dom.loadBtn.click(); });
+  dom.selectAllBtn.addEventListener('click', ()=>{ dom.queuesList.querySelectorAll('input[type="checkbox"]').forEach(c=>c.checked=true); setDirty(true); });
+  dom.clearAllBtn.addEventListener('click', ()=>{ dom.queuesList.querySelectorAll('input[type="checkbox"]').forEach(c=>c.checked=false); setDirty(true); });
+  dom.queuesList.addEventListener('change', e=>{ if (e.target?.matches('input[type="checkbox"][data-queue-id]')) setDirty(true); });
 })();
 </script>
 </body>
