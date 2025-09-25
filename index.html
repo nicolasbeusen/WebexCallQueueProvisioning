@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Webex Queue Manager — v2.7</title>
+  <title>Webex Queue Manager — v2.8</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <meta name="color-scheme" content="light dark">
   <style>
@@ -14,7 +14,7 @@
 <body class="bg-slate-50 text-slate-900 selection:bg-indigo-200/60">
   <header class="px-4 py-4 md:px-8 sticky top-0 bg-white/80 backdrop-blur border-b border-slate-200 z-10">
     <div class="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center gap-3">
-      <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager <span class="text-xs font-normal text-slate-500 align-middle">v2.7</span></h1>
+      <h1 class="text-2xl font-bold tracking-tight">Webex Queue Manager <span class="text-xs font-normal text-slate-500 align-middle">v2.8</span></h1>
     </div>
   </header>
 
@@ -23,10 +23,9 @@
     <section class="bg-white rounded-2xl shadow p-5 border border-slate-200">
       <div class="grid md:grid-cols-2 gap-4">
         <label class="block">
-          <span class="block text-sm font-medium text-slate-700">Personal Access Token (Bearer)</span>
-          <input id="token" type="password" class="mt-1 w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="Paste a Webex PAT with admin telephony scopes" autocomplete="off" />
-          <small class="text-slate-500">Scopes: <code>spark:people_read</code>, <code>spark-admin:telephony_config_read</code>, <code>spark-admin:telephony_config_write</code> (for saving).</small>
-        </label>
+          <span class="block text-sm font-medium text-slate-700">Bearer Token</span>
+          <input id="token" type="password" class="mt-1 w-full rounded-xl border-slate-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="Paste Bearer Token" autocomplete="off" />
+         </label>
 
       <div class="mt-4 flex flex-wrap gap-3">
         <button id="loadBtn" class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 text-white px-4 py-2 font-medium shadow hover:bg-indigo-500 active:scale-[.99]">
