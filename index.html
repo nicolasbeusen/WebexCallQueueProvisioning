@@ -150,6 +150,19 @@
     if (!res.ok && res.status !== 204){ const text = await res.text().catch(()=> ''); throw new Error(`PUT ${path} → ${res.status} ${res.statusText} ${text}`); }
     return res.status === 204 ? null : res.json();
   }
+  // Pagination helper for /v1/telephony/config/queues/agents/{personId}
+  // Uses offset & limit and fetches all pages.
+  async function getAllAgentQueues(personId, token, limit = 100) {
+    let offset = 0; const all = [];
+    for (let guard = 0; guard < 1000; guard++) { // hard stop to avoid accidental infinite loops
+      const page = await apiGet(`/telephony/config/queues/agents/${encodeURIComponent(personId)}`, token, { offset, limit });
+      const qs = page.queues || page.items || [];
+      all.push(...qs);
+      if (qs.length < limit) break; // last page
+      offset += limit;
+    }
+    return all;
+  }
 
   function renderUser(){
     dom.uName.textContent = state.person?.displayName || `${state.person?.firstName||''} ${state.person?.lastName||''}`.trim();
@@ -206,9 +219,9 @@
       state.queues = (qRes.queues || qRes.items || qRes.data || []).map(q=>({ id:q.id, name:q.name, phoneNumber:q.phoneNumber, locationId:q.locationId }));
 
       // (4) Current memberships for this agent (personId)
-      const agent = await apiGet(`/telephony/config/queues/agents/${encodeURIComponent(state.personId)}`, token);
+      const agentQueues = await getAllAgentQueues(state.personId, token, 100);
       state.assigned = new Map();
-      (agent.queues || []).forEach(q => state.assigned.set(q.id, { joinEnabled: !!q.joinEnabled }));
+      agentQueues.forEach(q => state.assigned.set(q.id, { joinEnabled: !!q.joinEnabled }));
 
       renderQueues(); toast('Loaded profile, location queues & assignments', 'success'); setDirty(false);
     } catch(err){ console.error(err); showAlert(err.message||String(err),'error'); }
